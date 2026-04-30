@@ -12,85 +12,105 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("MY_API_KEY")
-if not API_KEY:
-    raise ValueError("API key not found. Did you copy .env.example to .env?")
+# Open-Meteo is a free API for non-commercial use and does NOT require an API key.
+# The code below bypasses the strict key check but shows where it would normally live.
+API_KEY = os.getenv("MY_API_KEY", "not-needed")
 
 # TODO: Replace with your API's base URL
-BASE_URL = "https://api.example.com/v1"
+BASE_URL = "https://api.open-meteo.com/v1/forecast"
+# Base URL for Geocoding (used in call 2 & 3 to search for locations)
+GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
 
-# update or extend per call if your API requires it
+# Open-Meteo doesn't require an Authorization header, so we just use Content-Type.
 HEADERS = {
-    "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json",
 }
-
 
 def divider(label):
     print(f"\n{'=' * 50}\n{label}\n{'=' * 50}")
 
-
 # ── Call 1: GET request ───────────────────────────────────
-# Use for retrieving data without a request body.
-# TODO: Update url and params.
+# Use for retrieving weather data without a request body.
 def call_one_get():
-    divider("CALL 1 — GET Request")
+    divider("CALL 1 — GET Request (Current Weather in Berlin)")
 
-    url = f"{BASE_URL}/resource"
-    params = {"query": "python", "limit": 5}  # TODO: update these
+    url = BASE_URL
+    params = {
+        "latitude": 52.52,
+        "longitude": 13.41,
+        "current": "temperature_2m,wind_speed_10m",
+        "hourly": "temperature_2m",
+        "past_days": 0,
+        "forecast_days": 1
+    }
 
     response = requests.get(url, headers=HEADERS, params=params)
 
     if response.status_code == 200:
-        print(json.dumps(response.json(), indent=2))
+        data = response.json()
+        print(f"Current Temp: {data['current']['temperature_2m']}°C")
+        print(f"Current Wind Speed: {data['current']['wind_speed_10m']} km/h")
     else:
         print(f"[ERROR] {response.status_code}: {response.text}")
 
 
-# ── Call 2: POST request ──────────────────────────────────
-# Use for sending data to the API (e.g., a prompt or input text).
-# TODO: Update url and payload fields.
+# ── Call 2: POST request (Adapted to GET for Geocoding) ───
+# Open-Meteo uses GET requests. This function is adapted to search for a city's coordinates.
 def call_two_post():
-    divider("CALL 2 — POST Request")
+    divider("CALL 2 — Geocoding Request (Adapted from POST)")
 
-    url = f"{BASE_URL}/predict"
-    payload = {
-        "input": "What is machine learning?",  # TODO: update
-        "model": "default",                    # TODO: update
+    url = GEO_URL
+    # Finding the coordinates for Tokyo
+    params = {
+        "name": "Tokyo",
+        "count": 1,
+        "language": "en",
+        "format": "json"
     }
 
-    response = requests.post(url, headers=HEADERS, json=payload)
+    response = requests.get(url, headers=HEADERS, params=params)
 
     if response.status_code == 200:
         data = response.json()
-        print(data.get("result", json.dumps(data, indent=2)))  # TODO: update key
-    elif response.status_code == 401:
-        print("[ERROR] 401 Unauthorized — check your API key in .env")
-    elif response.status_code == 429:
-        print("[ERROR] 429 Rate Limited — wait and retry")
+        results = data.get("results", [])
+        if results:
+            city = results[0]
+            print(f"Found {city['name']}, {city['country']} at Lat: {city['latitude']}, Lon: {city['longitude']}")
+        else:
+            print("Location not found.")
     else:
         print(f"[ERROR] {response.status_code}: {response.text}")
 
 
-# ── Call 3: Parameterized POST ────────────────────────────
-# Same as Call 2 but accepts dynamic input to show varied output.
-# TODO: Update url and payload fields.
+# ── Call 3: Parameterized POST  ────────────────────────────
+# Accepts dynamic input (a city name), finds coordinates, and gets the weather.
 def call_three_parameterized(user_input: str):
-    divider(f"CALL 3 — Parameterized  |  input: '{user_input}'")
+    divider(f"CALL 3 — Parameterized GET | input: '{user_input}'")
 
-    url = f"{BASE_URL}/predict"
-    payload = {
-        "input": user_input,  # dynamic — passed in from __main__
-        "model": "default",   # TODO: update
+    # Step 1: Convert city name to coordinates
+    geo_response = requests.get(GEO_URL, params={"name": user_input, "count": 1})
+    
+    if geo_response.status_code != 200 or not geo_response.json().get("results"):
+        print(f"[ERROR] Could not resolve location: {user_input}")
+        return
+
+    location = geo_response.json()["results"][0]
+    lat, lon = location["latitude"], location["longitude"]
+    print(f"Resolved '{user_input}' -> {location['name']} ({lat}, {lon})")
+
+    # Fetch the weather using the retrieved coordinates
+    forecast_params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "temperature_2m,weather_code"
     }
-
-    response = requests.post(url, headers=HEADERS, json=payload)
+    
+    response = requests.get(BASE_URL, headers=HEADERS, params=forecast_params)
 
     if response.status_code == 200:
         data = response.json()
-        print(data.get("result", json.dumps(data, indent=2)))  # TODO: update key
-    elif response.status_code == 429:
-        print("[ERROR] 429 Rate Limited — slow down and retry")
+        temp = data.get("current", {}).get("temperature_2m", "N/A")
+        print(f"Result: The current temperature in {location['name']} is {temp}°C")
     else:
         print(f"[ERROR] {response.status_code}: {response.text}")
 
@@ -98,4 +118,4 @@ def call_three_parameterized(user_input: str):
 if __name__ == "__main__":
     call_one_get()
     call_two_post()
-    call_three_parameterized("Explain supervised learning in one sentence.")
+    call_three_parameterized("Chicago")
